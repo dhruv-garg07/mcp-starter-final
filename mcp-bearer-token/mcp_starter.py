@@ -134,47 +134,67 @@ async def about() -> dict:
 async def validate() -> str:
     return MY_NUMBER
 
-# --- Tool: job_finder (now smart!) ---
-JobFinderDescription = RichToolDescription(
-    description="Smart job tool: analyze descriptions, fetch URLs, or search jobs based on free text.",
-    use_when="Use this to evaluate job descriptions or search for jobs using freeform goals.",
-    side_effects="Returns insights, fetched job descriptions, or relevant job links.",
+# --- Tool: summarize_text (first N lines + TL;DR, no LLM) ---
+SummarizeTextDescription = RichToolDescription(
+    description="Summarize plain text or a URL: returns the first N non-empty lines and a TL;DR made from leading content (no LLM).",
+    use_when="Use to quickly skim long text or pages without model calls.",
+    side_effects="Fetches the URL if provided and simplifies HTML to Markdown before summarizing.",
 )
 
-@mcp.tool(description=JobFinderDescription.model_dump_json())
-async def job_finder(
-    user_goal: Annotated[str, Field(description="The user's goal (can be a description, intent, or freeform query)")],
-    job_description: Annotated[str | None, Field(description="Full job description text, if available.")] = None,
-    job_url: Annotated[AnyUrl | None, Field(description="A URL to fetch a job description from.")] = None,
-    raw: Annotated[bool, Field(description="Return raw HTML content if True")] = False,
+@mcp.tool(description=SummarizeTextDescription.model_dump_json())
+async def summarize_text(
+    text: Annotated[str | None, Field(description="Plain text to summarize.")] = None,
+    url: Annotated[AnyUrl | None, Field(description="URL to fetch and summarize.")] = None,
+    lines: Annotated[int, Field(description="Number of leading non-empty lines to include.")] = 10,
+    tldr_chars: Annotated[int, Field(description="Max characters for TL;DR.")] = 500,
 ) -> str:
     """
-    Handles multiple job discovery methods: direct description, URL fetch, or freeform search query.
+    Behavior:
+    - If `text` given: summarize that.
+    - Else if `url` given: fetch via Fetch.fetch_url (HTML→Markdown), then summarize.
+    - Output includes: First N lines + TL;DR (trimmed from the start of the content).
     """
-    if job_description:
-        return (
-            f"📝 **Job Description Analysis**\n\n"
-            f"---\n{job_description.strip()}\n---\n\n"
-            f"User Goal: **{user_goal}**\n\n"
-            f"💡 Suggestions:\n- Tailor your resume.\n- Evaluate skill match.\n- Consider applying if relevant."
-        )
+    if not text and not url:
+        raise McpError(ErrorData(code=INVALID_PARAMS, message="Provide either `text` or `url`."))
 
-    if job_url:
-        content, _ = await Fetch.fetch_url(str(job_url), Fetch.USER_AGENT, force_raw=raw)
-        return (
-            f"🔗 **Fetched Job Posting from URL**: {job_url}\n\n"
-            f"---\n{content.strip()}\n---\n\n"
-            f"User Goal: **{user_goal}**"
-        )
+    # Get content
+    if text:
+        content = str(text).strip()
+        source = "text"
+        source_ref = ""
+    else:
+        fetched, _ = await Fetch.fetch_url(str(url), Fetch.USER_AGENT, force_raw=False)
+        content = fetched.strip()
+        source = "url"
+        source_ref = f"{url}"
 
-    if "look for" in user_goal.lower() or "find" in user_goal.lower():
-        links = await Fetch.google_search_links(user_goal)
-        return (
-            f"🔍 **Search Results for**: _{user_goal}_\n\n" +
-            "\n".join(f"- {link}" for link in links)
-        )
+    # Normalize params
+    if lines is None or lines < 1:
+        lines = 1
+    if tldr_chars is None or tldr_chars < 1:
+        tldr_chars = 1
 
-    raise McpError(ErrorData(code=INVALID_PARAMS, message="Please provide either a job description, a job URL, or a search query in user_goal."))
+    # First N non-empty lines
+    non_empty = [ln for ln in content.splitlines() if ln.strip()]
+    first_part = "\n".join(non_empty[:lines]).strip()
+
+    # TL;DR from leading content (whitespace-collapsed), truncated to tldr_chars
+    collapsed = " ".join(content.split())
+    if len(collapsed) <= tldr_chars:
+        tldr = collapsed
+    else:
+        cut = collapsed[:tldr_chars].rstrip()
+        # try to cut at the last space for nicer ending
+        sp = cut.rfind(" ")
+        tldr = (cut[:sp] if sp != -1 and sp > tldr_chars // 2 else cut) + "…"
+
+    return (
+        f"🧾 **Summarize Text**\n\n"
+        f"- **Mode:** {source}{(' (' + source_ref + ')') if source_ref else ''}\n"
+        f"- **First {lines} lines:**\n"
+        f"---\n{first_part}\n---\n\n"
+        f"**TL;DR**\n{tldr}"
+    )
 
 
 # Image inputs and sending images

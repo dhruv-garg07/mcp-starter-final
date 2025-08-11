@@ -95,7 +95,6 @@ class Fetch:
     @staticmethod
     async def google_search_links(query: str, num_results: int = 5) -> list[str]:
         """
-        Perform a scoped DuckDuckGo search and return a list of job posting URLs.
         (Using DuckDuckGo because Google blocks most programmatic scraping.)
         """
         ddg_url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
@@ -119,14 +118,14 @@ class Fetch:
 
 # --- MCP Server Setup ---
 mcp = FastMCP(
-    "Job Finder MCP Server",
+    "Summarize Text MCP",
     auth=SimpleBearerAuthProvider(TOKEN),
 )
 
 
 @mcp.tool
 async def about() -> dict:
-    return {"name": mcp.name, "description": "An Example Bearer token mcp server"}
+    return {"name": mcp.name, "description": "First MCP Server"}
 
 
 # --- Tool: validate (required by Puch) ---

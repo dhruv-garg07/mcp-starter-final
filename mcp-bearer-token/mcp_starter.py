@@ -126,55 +126,19 @@ mcp = FastMCP(
 
 @mcp.tool
 async def about() -> dict:
-    """
-    Return a compact, self-describing manifest so clients can show quick help.
-    """
-    return {
-        "name": mcp.name,
-        "description": "A tiny, production-friendly MCP server with a couple of practical tools.",
-        "tools": [
-            {
-                "name": "about",
-                "what": "Returns name/description and available tools.",
-                "usage": "Call with no args.",
-            },
-            {
-                "name": "validate",
-                "what": "Simple health check used by clients to verify connectivity.",
-                "usage": "Call with no args; returns your configured MY_NUMBER.",
-            },
-            {
-                "name": "job_finder",
-                "what": "Summarize a job post from text or URL, or (best-effort) return search links.",
-                "usage": "Provide one of: job_description, job_url, or a search-y user_goal.",
-            },
-            {
-                "name": "make_img_black_and_white",
-                "what": "Convert a base64 image to grayscale and return it.",
-                "usage": "Pass base64-encoded PNG/JPEG via puch_image_data.",
-            },
-        ],
-    }
+    return {"name": mcp.name, "description": "An Example Bearer token mcp server"}
 
 
 # --- Tool: validate (required by Puch) ---
 @mcp.tool
 async def validate() -> str:
-    """
-    Keep behavior Puch expects (string), but normalize whitespace.
-    """
-    try:
-        return str(MY_NUMBER).strip()
-    except Exception:
-        # still guarantee a string
-        return ""
+    return MY_NUMBER
 
-
-# --- Tool: job_finder (simple + sturdy) ---
+# --- Tool: job_finder (now smart!) ---
 JobFinderDescription = RichToolDescription(
-    description="Summarize/parse a job from text or a URL, or (best-effort) return search links.",
-    use_when="Use for quick job intel: paste description, pass a URL, or ask to 'find' roles.",
-    side_effects="Returns concise markdown: title/experience/skills bullets and a short TL;DR or links.",
+    description="Smart job tool: analyze descriptions, fetch URLs, or search jobs based on free text.",
+    use_when="Use this to evaluate job descriptions or search for jobs using freeform goals.",
+    side_effects="Returns insights, fetched job descriptions, or relevant job links.",
 )
 
 @mcp.tool(description=JobFinderDescription.model_dump_json())
@@ -185,107 +149,40 @@ async def job_finder(
     raw: Annotated[bool, Field(description="Return raw HTML content if True")] = False,
 ) -> str:
     """
-    Simple, dependency-light behavior:
-    - If job_description given: extract rough title, experience, and skills via regex/keyword scans + produce TL;DR.
-    - If job_url given: fetch + simplify to Markdown (or raw), trim to a safe length, add TL;DR (first lines).
-    - Else if user_goal looks like a search: attempt DuckDuckGo links (gracefully degrade if bs4 isn't installed).
+    Handles multiple job discovery methods: direct description, URL fetch, or freeform search query.
     """
-    import re
-    from textwrap import shorten
-
-    def _extract_title(text: str) -> str:
-        # Heuristic: first non-empty line under ~80 chars, otherwise a common title pattern
-        for line in (ln.strip() for ln in text.splitlines()):
-            if 3 <= len(line) <= 80 and not line.lower().startswith(("responsibilit", "about", "who we", "requirements")):
-                return line
-        m = re.search(r"(Data Scientist|ML Engineer|Software Engineer|SDE|Backend Engineer|Frontend Engineer|MLOps|Product Manager)", text, re.I)
-        return m.group(0) if m else "Role"
-
-    def _extract_experience(text: str) -> str:
-        yrs = re.findall(r"(\d+)\s*\+?\s*years?", text, re.I)
-        if yrs:
-            mx = max(int(x) for x in yrs)
-            return f"{mx}+ years mentioned"
-        return "Experience not specified"
-
-    def _extract_location(text: str) -> str:
-        loc_hits = re.findall(r"(Remote|Hybrid|Bengaluru|Bangalore|Mumbai|Pune|Hyderabad|Chennai|Delhi|Gurgaon|Noida|India|US|USA|UK|Europe|APAC)", text, re.I)
-        return ", ".join(sorted(set(x.title() for x in loc_hits))) if loc_hits else "Location not specified"
-
-    def _extract_skills(text: str) -> list[str]:
-        kws = [
-            "python","java","c++","golang","rust","typescript","javascript","react","node",
-            "docker","kubernetes","linux","git","sql","nosql","postgres","mysql","mongodb",
-            "aws","gcp","azure","terraform",
-            "ml","machine learning","deep learning","pytorch","tensorflow","nlp","cv","llm","rag",
-            "spark","hadoop","kafka","airflow"
-        ]
-        found = []
-        low = text.lower()
-        for k in kws:
-            if k in low:
-                found.append(k.upper() if k in {"aws","gcp","sql","nlp","cv","llm","rag"} else k)
-        # dedupe, keep original order
-        seen = set()
-        out = []
-        for k in found:
-            if k not in seen:
-                out.append(k)
-                seen.add(k)
-        return out[:20]
-
-    def _tldr(md: str, max_chars: int = 500) -> str:
-        # Take first few lines as a quick TL;DR
-        head = "\n".join(md.strip().splitlines()[:12]).strip()
-        return shorten(head, width=max_chars, placeholder="…")
-
     if job_description:
-        text = job_description.strip()
-        title = _extract_title(text)
-        exp = _extract_experience(text)
-        loc = _extract_location(text)
-        skills = _extract_skills(text)
-        tldr = _tldr(text, 600)
         return (
             f"📝 **Job Description Analysis**\n\n"
-            f"**Title (guess):** {title}\n"
-            f"**Experience:** {exp}\n"
-            f"**Location:** {loc}\n"
-            f"**Skills (detected):** {', '.join(skills) if skills else '—'}\n\n"
-            f"**User Goal:** {user_goal}\n\n"
-            f"**TL;DR:**\n{tldr}"
+            f"---\n{job_description.strip()}\n---\n\n"
+            f"User Goal: **{user_goal}**\n\n"
+            f"💡 Suggestions:\n- Tailor your resume.\n- Evaluate skill match.\n- Consider applying if relevant."
         )
 
     if job_url:
-        content, preface = await Fetch.fetch_url(str(job_url), Fetch.USER_AGENT, force_raw=raw)
-        # Trim to keep responses lightweight
-        max_len = 6000 if raw else 4000
-        body = content.strip()[:max_len]
-        tldr = _tldr(content, 600) if not raw else "Raw mode requested; TL;DR skipped."
+        content, _ = await Fetch.fetch_url(str(job_url), Fetch.USER_AGENT, force_raw=raw)
         return (
-            f"🔗 **Fetched**: {job_url}\n\n"
-            f"{preface}{body}\n\n"
-            f"---\n**User Goal:** {user_goal}\n"
-            f"**TL;DR:** {tldr}"
+            f"🔗 **Fetched Job Posting from URL**: {job_url}\n\n"
+            f"---\n{content.strip()}\n---\n\n"
+            f"User Goal: **{user_goal}**"
         )
 
-    lg = user_goal.lower()
-    if any(w in lg for w in ["look for", "find ", "search", "open roles", "hiring"]):
-        try:
-            links = await Fetch.google_search_links(user_goal)
-        except Exception as e:
-            links = [f"<error>Search unavailable ({e.__class__.__name__}). Provide a job_url instead.</error>"]
-        return "🔍 **Search Results**\n\n" + "\n".join(f"- {link}" for link in links)
+    if "look for" in user_goal.lower() or "find" in user_goal.lower():
+        links = await Fetch.google_search_links(user_goal)
+        return (
+            f"🔍 **Search Results for**: _{user_goal}_\n\n" +
+            "\n".join(f"- {link}" for link in links)
+        )
 
-    raise McpError(ErrorData(code=INVALID_PARAMS, message="Provide a job_description, a job_url, or phrase your user_goal like a search (e.g., 'find ML engineer jobs in India')."))
+    raise McpError(ErrorData(code=INVALID_PARAMS, message="Please provide either a job description, a job URL, or a search query in user_goal."))
 
 
 # Image inputs and sending images
 
 MAKE_IMG_BLACK_AND_WHITE_DESCRIPTION = RichToolDescription(
-    description="Convert a base64 image (PNG/JPEG) to grayscale and return it.",
-    use_when="User provides base64 image data and wants a quick grayscale version.",
-    side_effects="Returns both a short status message and the grayscale image as base64 PNG.",
+    description="Convert an image to black and white and save it.",
+    use_when="Use this tool when the user provides an image URL and requests it to be converted to black and white.",
+    side_effects="The image will be processed and saved in a black and white format.",
 )
 
 @mcp.tool(description=MAKE_IMG_BLACK_AND_WHITE_DESCRIPTION.model_dump_json())
@@ -294,15 +191,13 @@ async def make_img_black_and_white(
 ) -> list[TextContent | ImageContent]:
     import base64
     import io
-    from PIL import Image, ImageOps
 
-    if not puch_image_data:
-        raise McpError(ErrorData(code=INVALID_PARAMS, message="puch_image_data is required (base64 string)."))
+    from PIL import Image
 
     try:
-        image_bytes = base64.b64decode(puch_image_data, validate=True)
+        image_bytes = base64.b64decode(puch_image_data)
         image = Image.open(io.BytesIO(image_bytes))
-        image = ImageOps.exif_transpose(image)  # auto-orient
+
         bw_image = image.convert("L")
 
         buf = io.BytesIO()
@@ -310,12 +205,7 @@ async def make_img_black_and_white(
         bw_bytes = buf.getvalue()
         bw_base64 = base64.b64encode(bw_bytes).decode("utf-8")
 
-        info = TextContent(
-            type="text",
-            text=f"Converted to grayscale. Original: {image.width}x{image.height}, Mode: {image.mode}. Returned PNG.",
-        )
-        img = ImageContent(type="image", mimeType="image/png", data=bw_base64)
-        return [info, img]
+        return [ImageContent(type="image", mimeType="image/png", data=bw_base64)]
     except Exception as e:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e)))
 
